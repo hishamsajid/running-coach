@@ -6,6 +6,7 @@ as stdout is reserved for the MCP protocol.
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +28,14 @@ def get_client() -> StravaClient:
     if _client is None:
         _client = StravaClient()
     return _client
+
+
+@mcp.tool()
+def get_current_timestamp() -> str:
+    """Return the current Unix timestamp (seconds since epoch) and the current UTC date.
+    Use this before computing date ranges for list_activities."""
+    now = int(time.time())
+    return json.dumps({"unix_timestamp": now})
 
 
 @mcp.tool()
@@ -73,7 +82,7 @@ def list_activities(
     Use page to paginate results. per_page max is 200.
 
     To get runs from the last 30 days, compute after_timestamp as (current Unix time - 2592000).
-    The current Unix timestamp is approximately 1744416000 (April 2026).
+    Call the get_current_timestamp tool to get the current Unix time.
     """
     return json.dumps(
         get_client().list_activities(

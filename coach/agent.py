@@ -38,8 +38,15 @@ Example: ["Training for Berlin Marathon in September 2026", "Has a history of IT
 
 # Keep at most this many messages in history to avoid token bloat.
 # Tool call pairs (assistant + user) are always kept together, so this
-# should be an even number. ~20 messages ≈ 10 back-and-forth exchanges.
-_MAX_HISTORY = 20
+# should be an even number. ~10 messages ≈ 5 back-and-forth exchanges.
+_MAX_HISTORY = 10
+
+# Only run memory extraction every N turns to reduce API call frequency.
+_EXTRACT_EVERY_N_TURNS = 5
+
+# Truncate large tool results to keep token counts under control.
+# Strava API responses can be very large JSON blobs.
+_MAX_TOOL_RESULT_CHARS = 3000
 
 
 def _truncate(messages: list) -> list:
@@ -72,6 +79,7 @@ class CoachSession:
         self._tools: list[dict] = []
         self._histories: dict[int, list] = {}
         self._memories: dict[int, list[str]] = {}
+        self._turn_counts: dict[int, int] = {}
         self._exit_stack = AsyncExitStack()
 
     def _build_system(self, chat_id: int) -> list:
@@ -151,6 +159,8 @@ class CoachSession:
         self._histories[chat_id] = _truncate(messages)
         messages = self._histories[chat_id]
 
+        self._turn_counts[chat_id] = self._turn_counts.get(chat_id, 0) + 1
+
         while True:
             for attempt in range(3):
                 try:
@@ -174,12 +184,12 @@ class CoachSession:
                     (b.text for b in response.content if b.type == "text"), ""
                 )
                 messages.append({"role": "assistant", "content": response.content})
-                # persist history and extract new memory facts concurrently
                 last_exchange = messages[-2:]  # user message + assistant reply
-                await asyncio.gather(
-                    db.save_history(chat_id, _serialize_messages(messages)),
-                    self._extract_facts(chat_id, _serialize_messages(last_exchange)),
-                )
+                should_extract = (self._turn_counts.get(chat_id, 0) % _EXTRACT_EVERY_N_TURNS == 0)
+                tasks = [db.save_history(chat_id, _serialize_messages(messages))]
+                if should_extract:
+                    tasks.append(self._extract_facts(chat_id, _serialize_messages(last_exchange)))
+                await asyncio.gather(*tasks)
                 return text
 
             elif response.stop_reason == "tool_use":
@@ -192,9 +202,9 @@ class CoachSession:
                             result = await self._mcp_session.call_tool(
                                 block.name, block.input
                             )
-                            content = (
-                                result.content[0].text if result.content else "{}"
-                            )
+                            content = result.content[0].text if result.content else "{}"
+                            if len(content) > _MAX_TOOL_RESULT_CHARS:
+                                content = content[:_MAX_TOOL_RESULT_CHARS] + "\n... [truncated]"
                         except Exception as e:
                             content = json.dumps({"error": str(e)})
 
