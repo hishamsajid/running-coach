@@ -26,6 +26,8 @@ from telegram.ext import (
     filters,
 )
 
+from anthropic import RateLimitError
+
 from config import TOKENS_FILE, get_config
 from coach.agent import CoachSession
 import db
@@ -119,6 +121,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(chunk)
         else:
             await update.message.reply_text("I didn't get a response. Please try again.")
+    except RateLimitError:
+        await update.message.reply_text(
+            "I'm being rate limited by the API. Please wait a minute and try again."
+        )
     except Exception:
         logger.exception("Error processing message from chat %s", chat_id)
         await update.message.reply_text(

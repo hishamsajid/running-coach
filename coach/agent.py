@@ -11,7 +11,7 @@ import sys
 from contextlib import AsyncExitStack
 from pathlib import Path
 
-from anthropic import AsyncAnthropic
+from anthropic import AsyncAnthropic, RateLimitError
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -34,6 +34,21 @@ New exchange to analyze:
 Return ONLY a JSON array of new fact strings not already captured in the existing list.
 If nothing new, return [].
 Example: ["Training for Berlin Marathon in September 2026", "Has a history of IT band issues on right leg"]"""
+
+
+# Keep at most this many messages in history to avoid token bloat.
+# Tool call pairs (assistant + user) are always kept together, so this
+# should be an even number. ~20 messages ≈ 10 back-and-forth exchanges.
+_MAX_HISTORY = 20
+
+
+def _truncate(messages: list) -> list:
+    """Drop oldest messages when history exceeds _MAX_HISTORY, keeping pairs intact."""
+    if len(messages) <= _MAX_HISTORY:
+        return messages
+    # Always drop from the front in pairs to avoid orphaned tool results
+    excess = len(messages) - _MAX_HISTORY
+    return messages[excess:]
 
 
 def _serialize_messages(messages: list) -> list:
@@ -133,15 +148,26 @@ class CoachSession:
 
         messages = self._histories[chat_id]
         messages.append({"role": "user", "content": user_message})
+        self._histories[chat_id] = _truncate(messages)
+        messages = self._histories[chat_id]
 
         while True:
-            response = await self._client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4096,
-                system=self._build_system(chat_id),
-                tools=self._tools,
-                messages=messages,
-            )
+            for attempt in range(3):
+                try:
+                    response = await self._client.messages.create(
+                        model="claude-sonnet-4-6",
+                        max_tokens=4096,
+                        system=self._build_system(chat_id),
+                        tools=self._tools,
+                        messages=messages,
+                    )
+                    break
+                except RateLimitError:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(30 * (attempt + 1))
+            else:
+                raise RuntimeError("Exhausted retries")
 
             if response.stop_reason == "end_turn":
                 text = next(
