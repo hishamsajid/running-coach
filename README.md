@@ -69,7 +69,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` and fill in all values:
+Edit `.env` and fill in the required values:
 
 ```env
 ANTHROPIC_API_KEY=""         # console.anthropic.com
@@ -78,6 +78,8 @@ STRAVA_CLIENT_SECRET=""      # strava.com/settings/api
 TELEGRAM_BOT_TOKEN=""        # from @BotFather
 TELEGRAM_ALLOWED_USER_ID=""  # from @userinfobot
 ```
+
+`DATABASE_URL`, `STRAVA_ACCESS_TOKEN`, `STRAVA_REFRESH_TOKEN`, and `STRAVA_TOKEN_EXPIRES_AT` are only needed for Railway deployment — see the deploying section below.
 
 ### 5. Authenticate with Strava
 
@@ -165,7 +167,7 @@ running-coach/
 ├── Procfile                     # Railway start command
 ├── requirements.txt
 ├── .env.example                 # Environment variable template
-├── db.py                        # PostgreSQL connection pool + history CRUD
+├── db.py                        # PostgreSQL connection pool + history/memory CRUD
 ├── coach/
 │   ├── agent.py                 # CoachSession: Claude agent + MCP + memory (used by bot)
 │   ├── cli.py                   # CLI agent loop
@@ -181,6 +183,7 @@ The MCP server exposes these tools to Claude:
 
 | Tool | Description |
 |---|---|
+| `get_current_timestamp` | Current Unix timestamp — used to compute date ranges for activity queries |
 | `get_athlete` | Athlete profile (name, weight, FTP, measurement preference) |
 | `get_athlete_stats` | Recent, YTD, and lifetime run totals |
 | `get_athlete_zones` | Configured HR and power zones |
@@ -188,5 +191,6 @@ The MCP server exposes these tools to Claude:
 | `get_activity` | Full activity details including splits and best efforts |
 | `get_activity_laps` | Lap-by-lap breakdown (useful for intervals) |
 | `get_activity_zones` | HR and pace zone distribution for an activity |
+| `save_memory` | Persist an important fact about the athlete across conversations |
 
 

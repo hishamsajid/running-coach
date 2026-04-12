@@ -41,11 +41,15 @@ async def init_pool():
     if not database_url:
         logger.warning("DATABASE_URL not set — chat history will not persist across restarts")
         return
-    _pool = await asyncpg.create_pool(database_url)
-    async with _pool.acquire() as conn:
-        await conn.execute(_CREATE_TABLE)
-        await conn.execute(_CREATE_MEMORY_TABLE)
-    logger.info("Database pool initialised")
+    try:
+        _pool = await asyncpg.create_pool(database_url)
+        async with _pool.acquire() as conn:
+            await conn.execute(_CREATE_TABLE)
+            await conn.execute(_CREATE_MEMORY_TABLE)
+        logger.info("Database pool initialised")
+    except Exception:
+        logger.exception("Failed to connect to database — chat history will not persist")
+        _pool = None
 
 
 async def close_pool():

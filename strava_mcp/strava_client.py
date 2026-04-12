@@ -1,3 +1,4 @@
+import logging
 import sys
 import time
 from pathlib import Path
@@ -5,6 +6,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from config import get_config
 
@@ -22,22 +25,26 @@ class StravaClient:
             self._refresh()
 
     def _refresh(self):
-        resp = httpx.post(
-            self.TOKEN_URL,
-            data={
-                "client_id": self._config.client_id,
-                "client_secret": self._config.client_secret,
-                "grant_type": "refresh_token",
-                "refresh_token": self._config.refresh_token,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        self._config.update_tokens(
-            access_token=data["access_token"],
-            refresh_token=data["refresh_token"],
-            expires_at=data["expires_at"],
-        )
+        try:
+            resp = httpx.post(
+                self.TOKEN_URL,
+                data={
+                    "client_id": self._config.client_id,
+                    "client_secret": self._config.client_secret,
+                    "grant_type": "refresh_token",
+                    "refresh_token": self._config.refresh_token,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            self._config.update_tokens(
+                access_token=data["access_token"],
+                refresh_token=data["refresh_token"],
+                expires_at=data["expires_at"],
+            )
+        except Exception as e:
+            logger.error("Strava token refresh failed: %s", e)
+            raise RuntimeError(f"Strava token refresh failed: {e}") from e
 
     def _get(self, path: str, **params) -> dict | list:
         self._refresh_if_needed()

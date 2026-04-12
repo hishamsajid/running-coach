@@ -28,7 +28,7 @@ from telegram.ext import (
 
 from anthropic import RateLimitError
 
-from config import TOKENS_FILE, get_config
+from config import get_config
 from coach.agent import CoachSession
 import db
 

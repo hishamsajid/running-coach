@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ async def run_agent():
     server_params = StdioServerParameters(
         command=sys.executable,
         args=[server_script],
+        env=os.environ.copy(),
     )
 
     client = AsyncAnthropic()

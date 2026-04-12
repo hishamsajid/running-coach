@@ -16,44 +16,45 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 import db
-from coach.prompts import SYSTEM_PROMPT, build_cached_system
+from coach.prompts import build_cached_system
 
 PROJECT_ROOT = Path(__file__).parent.parent
-
-_MEMORY_EXTRACT_PROMPT = """You are analyzing a conversation between a running coach AI and an athlete.
-
-Extract any NEW facts about the athlete from this exchange that are worth remembering long-term.
-Focus on: goals, race targets, injury history, training preferences, current fitness level, schedule constraints, preferred units (metric/imperial), personal bests, weekly mileage targets.
-
-Existing known facts:
-{existing}
-
-New exchange to analyze:
-{exchange}
-
-Return ONLY a JSON array of new fact strings not already captured in the existing list.
-If nothing new, return [].
-Example: ["Training for Berlin Marathon in September 2026", "Has a history of IT band issues on right leg"]"""
-
 
 # Keep at most this many messages in history to avoid token bloat.
 # Tool call pairs (assistant + user) are always kept together, so this
 # should be an even number. ~10 messages ≈ 5 back-and-forth exchanges.
 _MAX_HISTORY = 10
 
-# Only run memory extraction every N turns to reduce API call frequency.
-_EXTRACT_EVERY_N_TURNS = 5
-
 # Truncate large tool results to keep token counts under control.
 # Strava API responses can be very large JSON blobs.
 _MAX_TOOL_RESULT_CHARS = 3000
+
+_SAVE_MEMORY_TOOL = {
+    "name": "save_memory",
+    "description": (
+        "Save an important fact about this athlete to long-term memory. "
+        "Call this when the athlete mentions something worth remembering across conversations: "
+        "goals, race targets, injury history, training preferences, schedule constraints, "
+        "personal bests, or measurement preference (metric/imperial). "
+        "Do not save generic training advice — only athlete-specific facts."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "fact": {
+                "type": "string",
+                "description": "A concise fact to remember, e.g. 'Training for Berlin Marathon in September 2026'",
+            }
+        },
+        "required": ["fact"],
+    },
+}
 
 
 def _truncate(messages: list) -> list:
     """Drop oldest messages when history exceeds _MAX_HISTORY, keeping pairs intact."""
     if len(messages) <= _MAX_HISTORY:
         return messages
-    # Always drop from the front in pairs to avoid orphaned tool results
     excess = len(messages) - _MAX_HISTORY
     return messages[excess:]
 
@@ -79,7 +80,6 @@ class CoachSession:
         self._tools: list[dict] = []
         self._histories: dict[int, list] = {}
         self._memories: dict[int, list[str]] = {}
-        self._turn_counts: dict[int, int] = {}
         self._exit_stack = AsyncExitStack()
 
     def _build_system(self, chat_id: int) -> list:
@@ -91,26 +91,16 @@ class CoachSession:
             extra = f"\n\nWhat you already know about this athlete:\n{facts_text}"
         return build_cached_system(extra)
 
-    async def _extract_facts(self, chat_id: int, last_exchange: list) -> None:
-        """Extract new facts from the latest exchange and persist them."""
+    async def _handle_save_memory(self, chat_id: int, fact: str) -> str:
+        """Persist a new memory fact and return a confirmation."""
         existing = self._memories.get(chat_id, [])
-        prompt = _MEMORY_EXTRACT_PROMPT.format(
-            existing=json.dumps(existing, indent=2),
-            exchange=json.dumps(last_exchange, indent=2),
-        )
+        updated = existing + [fact]
+        self._memories[chat_id] = updated
         try:
-            response = await self._client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=512,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            new_facts = json.loads(response.content[0].text)
-            if new_facts:
-                updated = existing + new_facts
-                self._memories[chat_id] = updated
-                await db.save_memory(chat_id, updated)
+            await db.save_memory(chat_id, updated)
         except Exception:
-            pass  # memory extraction is best-effort
+            pass  # in-memory update already applied; DB failure is non-fatal
+        return json.dumps({"saved": fact})
 
     async def start(self):
         """Start the MCP server subprocess and initialise the session."""
@@ -136,7 +126,7 @@ class CoachSession:
                 "input_schema": tool.inputSchema,
             }
             for tool in tools_result.tools
-        ]
+        ] + [_SAVE_MEMORY_TOOL]
 
     async def stop(self):
         """Shut down the MCP server subprocess."""
@@ -149,17 +139,19 @@ class CoachSession:
         back to in-memory if DB is unavailable), then persisted after each reply.
         """
         if chat_id not in self._histories:
-            self._histories[chat_id], self._memories[chat_id] = await asyncio.gather(
-                db.load_history(chat_id),
-                db.load_memory(chat_id),
-            )
+            try:
+                self._histories[chat_id], self._memories[chat_id] = await asyncio.gather(
+                    db.load_history(chat_id),
+                    db.load_memory(chat_id),
+                )
+            except Exception:
+                self._histories[chat_id] = []
+                self._memories[chat_id] = []
 
         messages = self._histories[chat_id]
         messages.append({"role": "user", "content": user_message})
         self._histories[chat_id] = _truncate(messages)
         messages = self._histories[chat_id]
-
-        self._turn_counts[chat_id] = self._turn_counts.get(chat_id, 0) + 1
 
         while True:
             for attempt in range(3):
@@ -184,12 +176,10 @@ class CoachSession:
                     (b.text for b in response.content if b.type == "text"), ""
                 )
                 messages.append({"role": "assistant", "content": response.content})
-                last_exchange = messages[-2:]  # user message + assistant reply
-                should_extract = (self._turn_counts.get(chat_id, 0) % _EXTRACT_EVERY_N_TURNS == 0)
-                tasks = [db.save_history(chat_id, _serialize_messages(messages))]
-                if should_extract:
-                    tasks.append(self._extract_facts(chat_id, _serialize_messages(last_exchange)))
-                await asyncio.gather(*tasks)
+                try:
+                    await db.save_history(chat_id, _serialize_messages(messages))
+                except Exception:
+                    pass
                 return text
 
             elif response.stop_reason == "tool_use":
@@ -199,12 +189,17 @@ class CoachSession:
                 for block in response.content:
                     if block.type == "tool_use":
                         try:
-                            result = await self._mcp_session.call_tool(
-                                block.name, block.input
-                            )
-                            content = result.content[0].text if result.content else "{}"
-                            if len(content) > _MAX_TOOL_RESULT_CHARS:
-                                content = content[:_MAX_TOOL_RESULT_CHARS] + "\n... [truncated]"
+                            if block.name == "save_memory":
+                                content = await self._handle_save_memory(
+                                    chat_id, block.input.get("fact", "")
+                                )
+                            else:
+                                result = await self._mcp_session.call_tool(
+                                    block.name, block.input
+                                )
+                                content = result.content[0].text if result.content else "{}"
+                                if len(content) > _MAX_TOOL_RESULT_CHARS:
+                                    content = content[:_MAX_TOOL_RESULT_CHARS] + "\n... [truncated]"
                         except Exception as e:
                             content = json.dumps({"error": str(e)})
 
