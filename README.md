@@ -7,21 +7,25 @@ An AI-powered running coach that connects to your Strava account and gives data-
 - Analyses your actual Strava training history before giving advice
 - Flags injury risk patterns (volume spikes, too many hard days, no recovery)
 - Suggests specific workouts with targets (pace, distance, rest intervals)
-- Tracks conversation history within a session for follow-up questions
+- Persists conversation history in PostgreSQL across bot restarts
 - Available via Telegram bot (hosted) or CLI (local)
 
 ## Architecture
 
 ```
-bot.py / cli.py          ← entry points
-coach/session.py         ← Claude agent + agentic tool loop
-strava_mcp/server.py     ← MCP server exposing Strava as tools (subprocess)
+bot.py / cli.py              ← entry points
+coach/session.py             ← Claude agent + agentic tool loop
+coach/agent.py               ← CLI-specific agent loop
+db.py                        ← PostgreSQL connection pool + history CRUD
+strava_mcp/server.py         ← MCP server exposing Strava as tools (subprocess)
 strava_mcp/strava_client.py  ← Strava API HTTP client
-config.py                ← credentials + token management
-auth.py                  ← one-time Strava OAuth flow
+config.py                    ← credentials + token management
+auth.py                      ← one-time Strava OAuth flow
 ```
 
 Claude calls Strava tools via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). The MCP server runs as a subprocess communicating over stdio.
+
+Conversation history is persisted per chat in PostgreSQL (when `DATABASE_URL` is set) so context survives bot restarts and redeployments. Falls back to in-memory history if no database is configured.
 
 ## Prerequisites
 
@@ -29,6 +33,7 @@ Claude calls Strava tools via the [Model Context Protocol (MCP)](https://modelco
 - A [Strava account](https://www.strava.com) with activities logged
 - An [Anthropic API key](https://console.anthropic.com)
 - A Telegram bot token (for the bot; optional for CLI-only use)
+- PostgreSQL database (optional — for persistent chat history; required on Railway)
 
 ## Setup
 
@@ -114,7 +119,11 @@ git push
 2. Connect your GitHub repository
 3. Railway will auto-detect Python and install `requirements.txt`
 
-### 3. Set environment variables in Railway
+### 3. Add a PostgreSQL database
+
+In your Railway project → **New** → **Database** → **PostgreSQL**. Railway will automatically inject `DATABASE_URL` into your service. The bot creates the required table on first startup.
+
+### 4. Set environment variables in Railway
 
 In your Railway service → **Variables**, add everything from `.env` plus your Strava tokens (since `.tokens.json` is not committed):
 
@@ -131,7 +140,7 @@ In your Railway service → **Variables**, add everything from `.env` plus your 
 
 Run `auth.py` locally first to generate `.tokens.json`, then copy the values above.
 
-### 4. Deploy
+### 5. Deploy
 
 Railway deploys automatically on every push to your connected branch. The `Procfile` tells Railway to run `python bot.py` as a worker process.
 
@@ -146,6 +155,7 @@ running-coach/
 ├── Procfile                     # Railway start command
 ├── requirements.txt
 ├── .env.example                 # Environment variable template
+├── db.py                        # PostgreSQL connection pool + history CRUD
 ├── coach/
 │   ├── agent.py                 # CLI agent loop
 │   └── session.py               # Reusable session (used by bot)
@@ -169,6 +179,3 @@ The MCP server exposes these tools to Claude:
 | `get_activity_zones` | HR and pace zone distribution for an activity |
 
 
-## To-do
-
-- Add DB functionality to persist history across sessions.
