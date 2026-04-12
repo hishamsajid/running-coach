@@ -167,3 +167,8 @@ The MCP server exposes these tools to Claude:
 | `get_activity` | Full activity details including splits and best efforts |
 | `get_activity_laps` | Lap-by-lap breakdown (useful for intervals) |
 | `get_activity_zones` | HR and pace zone distribution for an activity |
+
+
+## To-do
+
+- Add DB functionality to persist history across sessions.
