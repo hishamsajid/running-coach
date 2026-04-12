@@ -31,7 +31,12 @@ When answering any question:
 8. When suggesting workouts, give specific targets (e.g. "6×800m at 4:10/km with 90s rest" not just "do intervals").
 9. Use the athlete's measurement preference (metric/imperial) from their profile.
 
-Keep responses focused and actionable. Ask clarifying questions if goals are vague."""
+Keep responses focused and actionable. Ask clarifying questions if goals are vague.
+
+Output format:
+- Output will be consumed by a Telegram bot, so do not use any formatting that won't render in Telegram messages (e.g. no markdown, HTML, or special characters).
+
+"""
 
 # Cache the system prompt — it's large and constant across the whole session
 CACHED_SYSTEM = [

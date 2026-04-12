@@ -41,6 +41,8 @@ _coach: CoachSession | None = None
 # Telegram max message length
 _MAX_LEN = 4096
 
+_ALLOWED_USER_ID = int(os.environ.get("TELEGRAM_ALLOWED_USER_ID", 0))
+
 
 def _split(text: str) -> list[str]:
     """Split a long response into ≤4096-char chunks on newline boundaries."""
@@ -59,7 +61,13 @@ def _split(text: str) -> list[str]:
     return chunks
 
 
+def _is_allowed(update: Update) -> bool:
+    return update.effective_user.id == _ALLOWED_USER_ID
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     await update.message.reply_text(
         "Running Coach is ready! Ask me anything about your training.\n\n"
         "Use /reset to clear conversation history and start fresh."
@@ -67,11 +75,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     _coach.clear_history(update.effective_chat.id)
     await update.message.reply_text("Conversation history cleared. Fresh start!")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     chat_id = update.effective_chat.id
     user_message = update.message.text
 
@@ -119,6 +131,10 @@ def check_setup():
 
     if not os.environ.get("TELEGRAM_BOT_TOKEN"):
         print("Missing TELEGRAM_BOT_TOKEN in .env")
+        sys.exit(1)
+
+    if not os.environ.get("TELEGRAM_ALLOWED_USER_ID"):
+        print("Missing TELEGRAM_ALLOWED_USER_ID in .env")
         sys.exit(1)
 
 
