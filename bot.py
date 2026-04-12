@@ -112,21 +112,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_message = update.message.text
 
-    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    status = await update.message.reply_text("Checking your Strava data...")
 
     try:
         reply = await _coach.chat(chat_id, user_message)
+        await status.delete()
         if reply:
             for chunk in _split(reply):
                 await update.message.reply_text(chunk)
         else:
             await update.message.reply_text("I didn't get a response. Please try again.")
     except RateLimitError:
+        await status.delete()
         await update.message.reply_text(
             "I'm being rate limited by the API. Please wait a minute and try again."
         )
     except Exception:
         logger.exception("Error processing message from chat %s", chat_id)
+        await status.delete()
         await update.message.reply_text(
             "Something went wrong on my end. Please try again."
         )
