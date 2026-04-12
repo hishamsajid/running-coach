@@ -23,9 +23,10 @@ class Config:
             self.refresh_token = data["refresh_token"]
             self.token_expires_at = data["expires_at"]
         else:
-            self.access_token = None
-            self.refresh_token = None
-            self.token_expires_at = 0
+            # Fall back to env vars (e.g. Railway — no local tokens file)
+            self.access_token = os.environ.get("STRAVA_ACCESS_TOKEN")
+            self.refresh_token = os.environ.get("STRAVA_REFRESH_TOKEN")
+            self.token_expires_at = int(os.environ.get("STRAVA_TOKEN_EXPIRES_AT", 0))
 
     def update_tokens(self, access_token: str, refresh_token: str, expires_at: int):
         self.access_token = access_token

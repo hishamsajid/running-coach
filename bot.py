@@ -113,7 +113,7 @@ def check_setup():
         print("Copy .env.example to .env and fill in your credentials.")
         sys.exit(1)
 
-    if not TOKENS_FILE.exists() or not config.access_token:
+    if not config.access_token or not config.refresh_token:
         print("Strava not authenticated yet. Run:  python auth.py")
         sys.exit(1)
 
