@@ -14,6 +14,8 @@ from anthropic import AsyncAnthropic
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+import db
+
 PROJECT_ROOT = Path(__file__).parent.parent
 
 SYSTEM_PROMPT = """You are an expert running and fitness coach with deep knowledge of:
@@ -47,6 +49,20 @@ CACHED_SYSTEM = [
         "cache_control": {"type": "ephemeral"},
     }
 ]
+
+
+def _serialize_messages(messages: list) -> list:
+    """Convert Anthropic SDK content blocks to plain dicts for JSON storage."""
+    result = []
+    for msg in messages:
+        content = msg["content"]
+        if isinstance(content, list):
+            content = [
+                block.model_dump() if hasattr(block, "model_dump") else block
+                for block in content
+            ]
+        result.append({"role": msg["role"], "content": content})
+    return result
 
 
 class CoachSession:
@@ -90,11 +106,11 @@ class CoachSession:
     async def chat(self, chat_id: int, user_message: str) -> str:
         """Process one user message and return the coach's reply.
 
-        Conversation history is maintained per chat_id so context carries
-        across multiple messages in the same chat.
+        History is loaded from the database on first message per chat (falling
+        back to in-memory if DB is unavailable), then persisted after each reply.
         """
         if chat_id not in self._histories:
-            self._histories[chat_id] = []
+            self._histories[chat_id] = await db.load_history(chat_id)
 
         messages = self._histories[chat_id]
         messages.append({"role": "user", "content": user_message})
@@ -113,6 +129,7 @@ class CoachSession:
                     (b.text for b in response.content if b.type == "text"), ""
                 )
                 messages.append({"role": "assistant", "content": response.content})
+                await db.save_history(chat_id, _serialize_messages(messages))
                 return text
 
             elif response.stop_reason == "tool_use":
@@ -145,6 +162,7 @@ class CoachSession:
                 messages.append({"role": "assistant", "content": response.content})
                 return ""
 
-    def clear_history(self, chat_id: int):
+    async def clear_history(self, chat_id: int):
         """Reset the conversation history for a chat."""
         self._histories.pop(chat_id, None)
+        await db.clear_history(chat_id)

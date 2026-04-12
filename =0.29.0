@@ -1,0 +1,8 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting asyncpg
+  Downloading asyncpg-0.31.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (2.9 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.9/2.9 MB 14.8 MB/s eta 0:00:00
+Collecting async_timeout>=4.0.3
+  Downloading async_timeout-5.0.1-py3-none-any.whl (6.2 kB)
+Installing collected packages: async_timeout, asyncpg
+Successfully installed async_timeout-5.0.1 asyncpg-0.31.0

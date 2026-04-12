@@ -28,6 +28,7 @@ from telegram.ext import (
 
 from config import TOKENS_FILE, get_config
 from coach.session import CoachSession
+import db
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
@@ -77,7 +78,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
-    _coach.clear_history(update.effective_chat.id)
+    await _coach.clear_history(update.effective_chat.id)
     await update.message.reply_text("Conversation history cleared. Fresh start!")
 
 
@@ -105,6 +106,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def post_init(application: Application):
     global _coach
+    await db.init_pool()
     logger.info("Starting coach session...")
     _coach = CoachSession()
     await _coach.start()
@@ -115,6 +117,7 @@ async def post_shutdown(application: Application):
     if _coach:
         logger.info("Shutting down coach session...")
         await _coach.stop()
+    await db.close_pool()
 
 
 def check_setup():
