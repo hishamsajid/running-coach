@@ -7,16 +7,18 @@ An AI-powered running coach that connects to your Strava account and gives data-
 - Analyses your actual Strava training history before giving advice
 - Flags injury risk patterns (volume spikes, too many hard days, no recovery)
 - Suggests specific workouts with targets (pace, distance, rest intervals)
-- Persists conversation history in PostgreSQL across bot restarts
+- Remembers facts about you across conversations (goals, injury history, preferences)
+- Persists conversation history and memory in PostgreSQL across bot restarts
 - Available via Telegram bot (hosted) or CLI (local)
 
 ## Architecture
 
 ```
 bot.py / cli.py              ← entry points
-coach/session.py             ← Claude agent + agentic tool loop
-coach/agent.py               ← CLI-specific agent loop
-db.py                        ← PostgreSQL connection pool + history CRUD
+coach/agent.py               ← CoachSession: Claude agent + MCP + memory (used by bot)
+coach/cli.py                 ← CLI-specific agent loop
+coach/prompts.py             ← shared system prompt used by both interfaces
+db.py                        ← PostgreSQL connection pool + history/memory CRUD
 strava_mcp/server.py         ← MCP server exposing Strava as tools (subprocess)
 strava_mcp/strava_client.py  ← Strava API HTTP client
 config.py                    ← credentials + token management
@@ -25,7 +27,7 @@ auth.py                      ← one-time Strava OAuth flow
 
 Claude calls Strava tools via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). The MCP server runs as a subprocess communicating over stdio.
 
-Conversation history is persisted per chat in PostgreSQL (when `DATABASE_URL` is set) so context survives bot restarts and redeployments. Falls back to in-memory history if no database is configured.
+Conversation history and athlete memory are persisted per chat in PostgreSQL (when `DATABASE_URL` is set) so context survives bot restarts and redeployments. Falls back to in-memory if no database is configured.
 
 ## Prerequisites
 
@@ -93,7 +95,13 @@ This opens a browser for OAuth authorisation and saves tokens to `.tokens.json`.
 python bot.py
 ```
 
-Send your bot a message on Telegram. Use `/reset` to clear conversation history.
+Send your bot a message on Telegram.
+
+| Command | Description |
+|---|---|
+| `/reset` | Clear conversation history and start fresh |
+| `/memory` | View what the bot remembers about you |
+| `/clearmemory` | Wipe all stored memory facts |
 
 ### CLI
 
@@ -121,7 +129,9 @@ git push
 
 ### 3. Add a PostgreSQL database
 
-In your Railway project → **New** → **Database** → **PostgreSQL**. Railway will automatically inject `DATABASE_URL` into your service. The bot creates the required table on first startup.
+In your Railway project → **New** → **Database** → **PostgreSQL**. Railway will automatically inject `DATABASE_URL` into your service. The bot creates the required tables (`chat_history`, `user_memory`) on first startup.
+
+Alternatively, use a free external Postgres provider such as [Neon](https://neon.tech) and set `DATABASE_URL` manually in Railway variables.
 
 ### 4. Set environment variables in Railway
 
@@ -157,8 +167,9 @@ running-coach/
 ├── .env.example                 # Environment variable template
 ├── db.py                        # PostgreSQL connection pool + history CRUD
 ├── coach/
-│   ├── agent.py                 # CLI agent loop
-│   └── session.py               # Reusable session (used by bot)
+│   ├── agent.py                 # CoachSession: Claude agent + MCP + memory (used by bot)
+│   ├── cli.py                   # CLI agent loop
+│   └── prompts.py               # Shared system prompt
 └── strava_mcp/
     ├── server.py                # MCP server (Strava tools)
     └── strava_client.py         # Strava API HTTP client

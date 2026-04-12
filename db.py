@@ -21,6 +21,14 @@ _CREATE_TABLE = """
     )
 """
 
+_CREATE_MEMORY_TABLE = """
+    CREATE TABLE IF NOT EXISTS user_memory (
+        chat_id BIGINT PRIMARY KEY,
+        facts JSONB NOT NULL DEFAULT '[]',
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+"""
+
 
 def is_available() -> bool:
     return _pool is not None
@@ -36,6 +44,7 @@ async def init_pool():
     _pool = await asyncpg.create_pool(database_url)
     async with _pool.acquire() as conn:
         await conn.execute(_CREATE_TABLE)
+        await conn.execute(_CREATE_MEMORY_TABLE)
     logger.info("Database pool initialised")
 
 
@@ -78,4 +87,39 @@ async def clear_history(chat_id: int):
         return
     await _pool.execute(
         "DELETE FROM chat_history WHERE chat_id = $1", chat_id
+    )
+
+
+async def load_memory(chat_id: int) -> list[str]:
+    """Return the stored memory facts for a chat, or [] if none."""
+    if not _pool:
+        return []
+    row = await _pool.fetchrow(
+        "SELECT facts FROM user_memory WHERE chat_id = $1", chat_id
+    )
+    return json.loads(row["facts"]) if row else []
+
+
+async def save_memory(chat_id: int, facts: list[str]):
+    """Upsert the memory facts for a chat."""
+    if not _pool:
+        return
+    await _pool.execute(
+        """
+        INSERT INTO user_memory (chat_id, facts, updated_at)
+        VALUES ($1, $2::jsonb, NOW())
+        ON CONFLICT (chat_id) DO UPDATE
+            SET facts = $2::jsonb, updated_at = NOW()
+        """,
+        chat_id,
+        json.dumps(facts),
+    )
+
+
+async def clear_memory(chat_id: int):
+    """Delete the stored memory for a chat."""
+    if not _pool:
+        return
+    await _pool.execute(
+        "DELETE FROM user_memory WHERE chat_id = $1", chat_id
     )

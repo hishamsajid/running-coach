@@ -27,7 +27,7 @@ from telegram.ext import (
 )
 
 from config import TOKENS_FILE, get_config
-from coach.session import CoachSession
+from coach.agent import CoachSession
 import db
 
 logging.basicConfig(
@@ -71,7 +71,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "Running Coach is ready! Ask me anything about your training.\n\n"
-        "Use /reset to clear conversation history and start fresh."
+        "/reset — clear conversation history\n"
+        "/memory — view what I remember about you\n"
+        "/clearmemory — wipe my memory"
     )
 
 
@@ -80,6 +82,26 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await _coach.clear_history(update.effective_chat.id)
     await update.message.reply_text("Conversation history cleared. Fresh start!")
+
+
+async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    facts = _coach.get_memory(update.effective_chat.id)
+    if not facts:
+        await update.message.reply_text(
+            "No memory yet. Chat with me and I'll start remembering things about your training."
+        )
+    else:
+        lines = "\n".join(f"• {f}" for f in facts)
+        await update.message.reply_text(f"What I remember about you:\n\n{lines}")
+
+
+async def cmd_clearmemory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    await _coach.clear_memory(update.effective_chat.id)
+    await update.message.reply_text("Memory cleared. I've forgotten everything I knew about you.")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -154,6 +176,8 @@ def main():
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("memory", cmd_memory))
+    app.add_handler(CommandHandler("clearmemory", cmd_clearmemory))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Bot starting...")

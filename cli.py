@@ -34,7 +34,7 @@ def check_setup():
 def main():
     check_setup()
 
-    from coach.agent import run_agent
+    from coach.cli import run_agent
 
     try:
         asyncio.run(run_agent())
