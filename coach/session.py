@@ -5,6 +5,7 @@ per-chat conversation history. The MCP subprocess stays alive for the
 lifetime of the session.
 """
 import json
+import os
 import sys
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -62,6 +63,7 @@ class CoachSession:
         server_params = StdioServerParameters(
             command=sys.executable,
             args=[server_script],
+            env=os.environ.copy(),
         )
         read, write = await self._exit_stack.enter_async_context(
             stdio_client(server_params)
