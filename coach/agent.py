@@ -37,6 +37,11 @@ _MAX_HISTORY_CHARS = 40_000
 # Strava API responses can be very large JSON blobs.
 _MAX_TOOL_RESULT_CHARS = 3000
 
+# Tool results older than this many recent messages are compressed to a
+# placeholder before sending to the API. Claude has already synthesised
+# older results into its replies — the raw JSON is no longer needed.
+_KEEP_FULL_TOOL_RESULTS = 6
+
 _SAVE_MEMORY_TOOL = {
     "name": "save_memory",
     "description": (
@@ -79,6 +84,41 @@ def _truncate(messages: list) -> list:
         messages = messages[2:]
 
     return messages
+
+
+def _compress_old_tool_results(messages: list) -> list:
+    """Return a copy of messages with old tool results replaced by a placeholder.
+
+    Tool result content for messages older than the last _KEEP_FULL_TOOL_RESULTS
+    messages is replaced with '[data used above]'. This reduces tokens sent to
+    the API without affecting what is stored in the database. The tool_use /
+    tool_result pairing structure required by the Anthropic API is preserved.
+    """
+    cutoff = len(messages) - _KEEP_FULL_TOOL_RESULTS
+    if cutoff <= 0:
+        return messages
+
+    result = []
+    for i, msg in enumerate(messages):
+        if (
+            i < cutoff
+            and msg["role"] == "user"
+            and isinstance(msg["content"], list)
+            and any(
+                isinstance(b, dict) and b.get("type") == "tool_result"
+                for b in msg["content"]
+            )
+        ):
+            compressed_content = [
+                {**b, "content": "[data used above]"}
+                if isinstance(b, dict) and b.get("type") == "tool_result"
+                else b
+                for b in msg["content"]
+            ]
+            result.append({**msg, "content": compressed_content})
+        else:
+            result.append(msg)
+    return result
 
 
 def _serialize_messages(messages: list) -> list:
@@ -184,12 +224,13 @@ class CoachSession:
         while True:
             for attempt in range(3):
                 try:
+                    api_messages = _compress_old_tool_results(messages)
                     response = await self._client.messages.create(
                         model="claude-sonnet-4-6",
                         max_tokens=4096,
                         system=self._build_system(chat_id),
                         tools=self._tools,
-                        messages=messages,
+                        messages=api_messages,
                     )
                     break
                 except RateLimitError:

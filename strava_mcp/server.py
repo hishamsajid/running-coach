@@ -40,6 +40,21 @@ _ACTIVITY_KEEP = {
     "gear",
 }
 
+# Subset for summary-level activities from list_activities.
+# Drops athlete objects, map polylines, latlng, upload IDs, social counts.
+_ACTIVITY_SUMMARY_KEEP = {
+    "id", "name", "type", "sport_type", "workout_type",
+    "start_date", "start_date_local",
+    "distance", "moving_time", "total_elevation_gain",
+    "average_speed", "average_heartrate", "max_heartrate",
+    "average_cadence", "suffer_score", "pr_count",
+}
+
+
+# Fields kept per best_effort entry inside a detailed activity.
+# Drops nested activity/athlete objects, redundant timestamps, resource_state.
+_BEST_EFFORT_KEEP = {"name", "elapsed_time", "distance", "pr_rank"}
+
 
 def get_client() -> StravaClient:
     global _client
@@ -91,10 +106,10 @@ def list_activities(
 ) -> str:
     """List the athlete's activities (summary level).
 
-    Each activity includes: id, name, type, sport_type, start_date, distance (metres),
-    moving_time (seconds), elapsed_time (seconds), total_elevation_gain (metres),
-    average_speed (m/s), max_speed (m/s), average_heartrate, max_heartrate,
-    average_cadence, suffer_score, kudos_count, pr_count.
+    Each activity includes: id, name, type, sport_type, workout_type, start_date,
+    start_date_local, distance (metres), moving_time (seconds),
+    total_elevation_gain (metres), average_speed (m/s), average_heartrate,
+    max_heartrate, average_cadence, suffer_score, pr_count.
 
     Use after_timestamp / before_timestamp (Unix epoch integers) to filter by date range.
     Use page to paginate results. per_page max is 200. Default is 10 to keep
@@ -103,14 +118,16 @@ def list_activities(
     To get runs from the last 30 days, compute after_timestamp as (current Unix time - 2592000).
     Call the get_current_timestamp tool to get the current Unix time.
     """
-    return json.dumps(
-        get_client().list_activities(
-            before=before_timestamp,
-            after=after_timestamp,
-            per_page=per_page,
-            page=page,
-        )
+    activities = get_client().list_activities(
+        before=before_timestamp,
+        after=after_timestamp,
+        per_page=per_page,
+        page=page,
     )
+    return json.dumps([
+        {k: v for k, v in a.items() if k in _ACTIVITY_SUMMARY_KEEP}
+        for a in activities
+    ])
 
 
 @mcp.tool()
@@ -127,6 +144,14 @@ def get_activity(activity_id: int) -> str:
     Use this after list_activities to drill into a specific run for detailed analysis."""
     data = get_client().get_activity(activity_id)
     filtered = {k: v for k, v in data.items() if k in _ACTIVITY_KEEP}
+
+    if filtered.get("best_efforts"):
+        filtered["best_efforts"] = [
+            {k: v for k, v in effort.items() if k in _BEST_EFFORT_KEEP}
+            for effort in filtered["best_efforts"]
+            if effort is not None and effort.get("pr_rank") is not None
+        ]
+
     return json.dumps(filtered)
 
 
