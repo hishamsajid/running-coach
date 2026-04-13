@@ -254,7 +254,10 @@ class CoachSession:
                 text = next(
                     (b.text for b in response.content if b.type == "text"), ""
                 )
-                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "assistant", "content": [
+                    b.model_dump() if hasattr(b, "model_dump") else b
+                    for b in response.content
+                ]})
                 try:
                     await db.save_history(chat_id, _serialize_messages(messages))
                 except Exception:
@@ -262,7 +265,10 @@ class CoachSession:
                 return text
 
             elif response.stop_reason == "tool_use":
-                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "assistant", "content": [
+                    b.model_dump() if hasattr(b, "model_dump") else b
+                    for b in response.content
+                ]})
                 tool_results = []
 
                 for block in response.content:
@@ -293,7 +299,10 @@ class CoachSession:
                 messages.append({"role": "user", "content": tool_results})
 
             else:
-                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "assistant", "content": [
+                    b.model_dump() if hasattr(b, "model_dump") else b
+                    for b in response.content
+                ]})
                 return ""
 
     async def clear_history(self, chat_id: int):
