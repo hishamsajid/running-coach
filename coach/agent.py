@@ -6,6 +6,7 @@ lifetime of the session.
 """
 import asyncio
 import json
+import logging
 import os
 import sys
 from contextlib import AsyncExitStack
@@ -18,12 +19,19 @@ from mcp.client.stdio import stdio_client
 import db
 from coach.prompts import build_cached_system
 
+logger = logging.getLogger(__name__)
+
 PROJECT_ROOT = Path(__file__).parent.parent
 
 # Keep at most this many messages in history to avoid token bloat.
 # Tool call pairs (assistant + user) are always kept together, so this
 # should be an even number. ~10 messages ≈ 5 back-and-forth exchanges.
 _MAX_HISTORY = 10
+
+# Secondary guard: drop oldest pairs if total serialised history exceeds this.
+# 40 000 chars ≈ 10 000 tokens, leaving headroom for system prompt, tools, and
+# the new user message within the model's context window.
+_MAX_HISTORY_CHARS = 40_000
 
 # Truncate large tool results to keep token counts under control.
 # Strava API responses can be very large JSON blobs.
@@ -52,11 +60,25 @@ _SAVE_MEMORY_TOOL = {
 
 
 def _truncate(messages: list) -> list:
-    """Drop oldest messages when history exceeds _MAX_HISTORY, keeping pairs intact."""
-    if len(messages) <= _MAX_HISTORY:
-        return messages
-    excess = len(messages) - _MAX_HISTORY
-    return messages[excess:]
+    """Drop oldest messages when history exceeds limits, keeping pairs intact.
+
+    Applies two limits in order:
+    1. Message count (_MAX_HISTORY) — a fast ceiling on round-trips.
+    2. Total serialised size (_MAX_HISTORY_CHARS) — guards against a small
+       number of tool-heavy messages that are individually large.
+    Pairs are always removed together so tool_use/tool_result blocks stay matched.
+    """
+    # 1. Message count limit
+    if len(messages) > _MAX_HISTORY:
+        messages = messages[len(messages) - _MAX_HISTORY:]
+
+    # 2. Character size limit — trim oldest pairs until under budget
+    while len(messages) > 2:
+        if sum(len(json.dumps(m)) for m in messages) <= _MAX_HISTORY_CHARS:
+            break
+        messages = messages[2:]
+
+    return messages
 
 
 def _serialize_messages(messages: list) -> list:
@@ -128,6 +150,12 @@ class CoachSession:
             for tool in tools_result.tools
         ] + [_SAVE_MEMORY_TOOL]
 
+        # Mark the last tool as a cache breakpoint so the entire tools list is
+        # cached.  Tool definitions are static for the lifetime of the session
+        # and can be 1 500–3 000 tokens — caching them saves cost on every call.
+        if self._tools:
+            self._tools[-1] = {**self._tools[-1], "cache_control": {"type": "ephemeral"}}
+
     async def stop(self):
         """Shut down the MCP server subprocess."""
         await self._exit_stack.aclose()
@@ -170,6 +198,16 @@ class CoachSession:
                     await asyncio.sleep(30 * (attempt + 1))
             else:
                 raise RuntimeError("Exhausted retries")
+
+            u = response.usage
+            logger.info(
+                "tokens chat_id=%s in=%d out=%d cache_write=%d cache_read=%d",
+                chat_id,
+                u.input_tokens,
+                u.output_tokens,
+                getattr(u, "cache_creation_input_tokens", 0),
+                getattr(u, "cache_read_input_tokens", 0),
+            )
 
             if response.stop_reason == "end_turn":
                 text = next(

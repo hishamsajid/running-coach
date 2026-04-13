@@ -35,10 +35,16 @@ Output format:
 
 
 def build_cached_system(extra: str = "") -> list:
-    """Return a system prompt block with prompt caching enabled.
+    """Return system prompt blocks with prompt caching enabled.
 
-    Pass `extra` to append additional context (e.g. known athlete facts)
-    without duplicating the cache-busting logic.
+    The static SYSTEM_PROMPT is in its own cached block so it is never
+    invalidated.  Athlete-specific facts (which change whenever save_memory
+    fires) go in a second, uncached block so adding a new fact does not bust
+    the cache for the large static prompt.
     """
-    text = SYSTEM_PROMPT + extra
-    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+    blocks: list = [
+        {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
+    ]
+    if extra:
+        blocks.append({"type": "text", "text": extra})
+    return blocks
